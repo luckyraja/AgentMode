@@ -1,7 +1,8 @@
 #!/bin/zsh
 # agent-mode: switch this Mac between "agent" (you're away, agents drive the screen)
 # and "human" (you're at the keyboard).
-#   agent-mode on | off | toggle | status | presence
+#   agent-mode on | off | toggle  [--by WHO] [--why REASON]
+#   agent-mode status | presence | history [N]
 set -u
 
 # --- settings -------------------------------------------------------------
@@ -23,9 +24,27 @@ mkdir -p "$STATE"
 
 mode() { cat "$STATE/mode" 2>/dev/null || echo human; }
 
+CMD=${1:-status}
+(( $# )) && shift
+BY=terminal WHY=""
+while (( $# )); do
+  case $1 in
+    --by)  BY=${2:-}; shift 2 ;;
+    --why) WHY=${2:-}; shift 2 ;;
+    *)     break ;;
+  esac
+done
+
+# Who switched and why, so a returning human can see what happened.
+HISTORY="$STATE/history.log"
+record() {
+  print -r -- "$(date '+%Y-%m-%d %H:%M')	$1	$BY	$WHY" >> "$HISTORY"
+  tail -n 50 "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
+}
+
 # One switch at a time (menu bar click + OpenClaw at once).
 LOCK="$STATE/lock"
-if [[ "${1:-status}" != (status|presence) ]]; then
+if [[ $CMD == (on|off|toggle) ]]; then
   if ! mkdir "$LOCK" 2>/dev/null; then echo "agent-mode: already switching" >&2; exit 1; fi
   trap 'rmdir "$LOCK"' EXIT
 fi
@@ -44,6 +63,7 @@ agent_on() {
   echo $! > "$STATE/caffeinate.pid"
 
   echo agent > "$STATE/mode"
+  record agent
   echo "agent mode: display $AGENT_DISPLAY, closed $(wc -l < "$STATE/closed-apps" | tr -d ' ') app(s)"
   (( ${#still} )) && echo "still open (unsaved work?): ${still[*]}"
   return 0
@@ -64,6 +84,7 @@ agent_off() {
   rm -f "$STATE/closed-apps"
 
   echo human > "$STATE/mode"
+  record human
   echo "human mode: display ${display:-$HUMAN_DISPLAY}"
 }
 
@@ -96,11 +117,20 @@ presence() {
   echo "verdict=$verdict"
 }
 
-case "${1:-status}" in
+# Last N switches, newest first: "Oct 20 3:12pm  agent  Mini  checking Find My"
+show_history() {
+  [[ -f $HISTORY ]] || return 0
+  tail -r -n "${1:-5}" "$HISTORY" | while IFS=$'\t' read -r when to by why; do
+    print -r -- "$(date -j -f '%Y-%m-%d %H:%M' "$when" '+%b %-d %-I:%M%p' | sed 's/AM/am/;s/PM/pm/')  $to  $by${why:+  $why}"
+  done
+}
+
+case $CMD in
   on)       agent_on ;;
   off)      agent_off ;;
   toggle)   [[ $(mode) == agent ]] && agent_off || agent_on ;;
   status)   mode ;;
   presence) presence ;;
-  *)        echo "usage: agent-mode on|off|toggle|status|presence" >&2; exit 2 ;;
+  history)  show_history "${1:-5}" ;;
+  *)        echo "usage: agent-mode on|off|toggle [--by WHO] [--why REASON] | status | presence | history [N]" >&2; exit 2 ;;
 esac

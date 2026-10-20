@@ -11,10 +11,11 @@ Clicking 🤖 switches back: restores your resolution, reopens the apps it close
 
 ## Pieces
 
-- `agent-mode`: the script that does the work. `agent-mode on | off | toggle | status | presence`
+- `agent-mode`: the script that does the work. `agent-mode on | off | toggle [--by WHO] [--why REASON]`, plus `status`, `presence` and `history`
 - `helper.swift`: small CLI for display modes and quitting apps by bundle id
 - `main.swift`: the menu bar app, which just runs the script
 - `agent-mode presence` reports idle time, lock state, and whether a video or call is holding the display awake, ending in a verdict (`away`, `present`, `busy`, `locked`). Agents can use it to decide whether to take over the screen or ask first.
+- Every switch is logged with who did it and why (`agent-mode history`). The right-click menu shows the last few, so when you come back to 🤖 you can see an agent switched while you were away.
 
 ## Build
 

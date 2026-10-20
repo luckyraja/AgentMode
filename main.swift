@@ -8,10 +8,10 @@ enum AgentMode {
     static let path = NSHomeDirectory() + "/.local/bin/agent-mode"
 
     @discardableResult
-    static func run(_ arg: String) -> (status: Int32, output: String) {
+    static func run(_ args: String...) -> (status: Int32, output: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = [arg]
+        p.arguments = args
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         busy = true
         item.button?.title = "⏳"
         DispatchQueue.global().async {
-            let (status, out) = AgentMode.run("toggle")
+            let (status, out) = AgentMode.run("toggle", "--by", "menu bar")
             DispatchQueue.main.async {
                 self.busy = false
                 self.lastMessage = out
@@ -73,6 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(disabled(agent ? "Agent mode" : "Human mode"))
         if !lastMessage.isEmpty {
             lastMessage.split(separator: "\n").forEach { menu.addItem(disabled(String($0))) }
+        }
+        let history = AgentMode.run("history", "3").output
+        if !history.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(disabled("Recent switches"))
+            history.split(separator: "\n").forEach { menu.addItem(disabled("  " + $0)) }
         }
         menu.addItem(.separator())
         let toggle = NSMenuItem(title: agent ? "Switch to Human Mode" : "Switch to Agent Mode",
