@@ -1,0 +1,106 @@
+#!/bin/zsh
+# agent-mode: switch this Mac between "agent" (you're away, agents drive the screen)
+# and "human" (you're at the keyboard).
+#   agent-mode on | off | toggle | status | presence
+set -u
+
+# --- settings -------------------------------------------------------------
+AGENT_DISPLAY="1920x1080 hidpi"   # see: agentmode-helper display list
+HUMAN_DISPLAY="2560x1440 hidpi"   # fallback if no saved resolution
+CLOSE_APPS=(
+  com.apple.Safari                # Safari
+  com.automattic.beeper.desktop   # Beeper Desktop
+  com.apple.ScreenContinuity      # iPhone Mirroring
+  com.pais.handy                  # Handy
+)
+REOPEN_APPS=1                     # reopen what agent mode closed when you come back
+AWAY_AFTER=600                    # seconds of no input before `presence` says away
+# ---------------------------------------------------------------------------
+
+HELPER="${0:A:h}/agentmode-helper"
+STATE="$HOME/Library/Application Support/AgentMode"
+mkdir -p "$STATE"
+
+mode() { cat "$STATE/mode" 2>/dev/null || echo human; }
+
+# One switch at a time (menu bar click + OpenClaw at once).
+LOCK="$STATE/lock"
+if [[ "${1:-status}" != (status|presence) ]]; then
+  if ! mkdir "$LOCK" 2>/dev/null; then echo "agent-mode: already switching" >&2; exit 1; fi
+  trap 'rmdir "$LOCK"' EXIT
+fi
+
+agent_on() {
+  [[ $(mode) == agent ]] && { echo "already in agent mode"; return; }
+
+  "$HELPER" display get > "$STATE/human-display"
+  "$HELPER" quit "${CLOSE_APPS[@]}" > "$STATE/closed-apps"
+  local still=($("$HELPER" running "${CLOSE_APPS[@]}"))
+
+  "$HELPER" display set ${=AGENT_DISPLAY} > /dev/null
+
+  # Keep the display awake; a locked or sleeping screen is useless to an agent.
+  caffeinate -di > /dev/null 2>&1 &!
+  echo $! > "$STATE/caffeinate.pid"
+
+  echo agent > "$STATE/mode"
+  echo "agent mode: display $AGENT_DISPLAY, closed $(wc -l < "$STATE/closed-apps" | tr -d ' ') app(s)"
+  (( ${#still} )) && echo "still open (unsaved work?): ${still[*]}"
+  return 0
+}
+
+agent_off() {
+  [[ $(mode) == human ]] && { echo "already in human mode"; return; }
+
+  local display=$(cat "$STATE/human-display" 2>/dev/null)
+  "$HELPER" display set ${=${display:-$HUMAN_DISPLAY}} > /dev/null
+
+  [[ -f "$STATE/caffeinate.pid" ]] && kill $(cat "$STATE/caffeinate.pid") 2>/dev/null
+  rm -f "$STATE/caffeinate.pid"
+
+  if (( REOPEN_APPS )) && [[ -f "$STATE/closed-apps" ]]; then
+    while read -r id; do [[ -n $id ]] && open -g -b "$id"; done < "$STATE/closed-apps"
+  fi
+  rm -f "$STATE/closed-apps"
+
+  echo human > "$STATE/mode"
+  echo "human mode: display ${display:-$HUMAN_DISPLAY}"
+}
+
+# Is Raja at the keyboard? Prints key=value lines ending in a verdict:
+#   locked  - screen locked or another user on console; nobody can use the screen
+#   present - recent input
+#   busy    - idle, but an app is holding the display awake (video, call)
+#   away    - idle with nothing holding the display; safe to switch to agent mode
+presence() {
+  local idle=$(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}')
+  local console=$(ioreg -n Root -d1 | grep -o '"kCGSSessionOnConsoleKey"=Yes[^}]*"kCGSSessionUserNameKey"="[^"]*"' | grep -o '[^"]*"$' | tr -d '"')
+  local locked=no
+  ioreg -n Root -d1 | grep -q '"CGSSessionScreenIsLocked"=Yes' && locked=yes
+  # Display-sleep holds from real apps; caffeinate (ours or other tools') doesn't count.
+  local hold=$(pmset -g assertions | grep -E 'pid [0-9]+\(.*PreventUserIdleDisplaySleep' \
+    | grep -v '(caffeinate)' | sed -E 's/.*pid [0-9]+\(([^)]*)\).*named: "?([^"]*)"?.*/\1: \2/' | paste -sd ';' -)
+
+  local verdict
+  if [[ $locked == yes || $console != $USER ]]; then verdict=locked
+  elif (( idle < AWAY_AFTER )); then verdict=present
+  elif [[ -n $hold ]]; then verdict=busy
+  else verdict=away
+  fi
+
+  echo "mode=$(mode)"
+  echo "idle_seconds=$idle"
+  echo "locked=$locked"
+  echo "console_user=$console"
+  echo "display_hold=${hold:-none}"
+  echo "verdict=$verdict"
+}
+
+case "${1:-status}" in
+  on)       agent_on ;;
+  off)      agent_off ;;
+  toggle)   [[ $(mode) == agent ]] && agent_off || agent_on ;;
+  status)   mode ;;
+  presence) presence ;;
+  *)        echo "usage: agent-mode on|off|toggle|status|presence" >&2; exit 2 ;;
+esac
