@@ -67,7 +67,7 @@ agent_off() {
   echo "human mode: display ${display:-$HUMAN_DISPLAY}"
 }
 
-# Is Raja at the keyboard? Prints key=value lines ending in a verdict:
+# Is the user at the keyboard? Prints key=value lines ending in a verdict:
 #   locked  - screen locked or another user on console; nobody can use the screen
 #   present - recent input
 #   busy    - idle, but an app is holding the display awake (video, call)
